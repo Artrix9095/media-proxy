@@ -82,19 +82,39 @@ export class HLSPlugin extends Plugin {
         // Parse the response body into a hls playlist
         const playlist = Parser.parse(response.data);
         // Replace all the urls in the playlist with proxied urls
+        console.log(playlist);
         playlist.uri = this._getProxiedUrl(playlist.uri, options.url, options.headers, req);
         if (playlist.isMasterPlaylist) {
-            playlist.variants.map(variant => {
+            playlist.variants.forEach(variant => {
                 variant.uri = this._getProxiedUrl(variant.uri, options.url, options.headers, req);
             });
-        } else if (!playlist.isMasterPlaylist) {
+        } else {
             // Bad code quality to bypass the type checker
-            (playlist as any).segments = (playlist as Parser.types.MediaPlaylist).segments.map(segment => {
+            // @ts-ignore
+            playlist.segments = (playlist as Parser.types.MediaPlaylist).segments.map(segment => {
                 return {
                     ...segment,
                     uri: this._getProxiedUrl(segment.uri, options.url, options.headers, req),
                 };
             });
+            // @ts-ignore
+            playlist.prefetchSegments = (playlist as Parser.types.MediaPlaylist).prefetchSegments.map(
+                segment => {
+                    return {
+                        ...segment,
+                        uri: this._getProxiedUrl(segment.uri, options.url, options.headers, req),
+                    };
+                }
+            );
+            // @ts-ignore
+            playlist.renditionReports = (playlist as Parser.types.MediaPlaylist).renditionReports.map(
+                report => {
+                    return {
+                        ...report,
+                        uri: this._getProxiedUrl(report.uri, options.url, options.headers, req),
+                    };
+                }
+            );
         }
         return {
             body: Parser.stringify(playlist),
