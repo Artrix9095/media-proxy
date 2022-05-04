@@ -1,7 +1,7 @@
 {
   "name": "media-proxy",
   "version": "1.0.0",
-  "description": "A simple unopinionated media proxy",
+  "description": "A simplistic yet flexible way to proxy your media.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "author": "Artrix <39530102+Artrix9095@users.noreply.github.com>",
