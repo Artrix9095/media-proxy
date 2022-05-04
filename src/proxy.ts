@@ -58,6 +58,7 @@ export class Proxy extends (EventEmitter as {
             this.server = options.server;
             this._log('info', `Using provided server.`);
             this.server.on('request', this._requestHandler);
+            this.server.on('listening', callback);
         }
         options.plugins.forEach(plugin => this.plugins.set(plugin.name, plugin));
     }
@@ -120,13 +121,13 @@ export class Proxy extends (EventEmitter as {
         const protocol = getProtocol(req);
         const url = new URL(req.url, `${protocol}://${req.headers.host}`);
         this._log('info', `${req.method} ${url.pathname}`);
-        const [_, plugin, base64] = url.pathname.split('/');
+        const [plugin, base64] = url.pathname.split('/').slice(1); // Remove first slash
         this._log('info', `plugin: ${plugin}`);
         let options: PluginOptions;
         if (plugin && base64) {
             try {
                 options = JSON.parse(Buffer.from(base64, 'base64').toString('utf8'));
-                this._log('info', `options: ${JSON.stringify(options, null, 2)}`);
+                this._log('info', `options: \n ${JSON.stringify(options, null, 2)}`);
             } catch (e) {
                 this._log('error', `Failed to parse options: ${e}`);
                 // Write to response a error header and return null
@@ -135,7 +136,7 @@ export class Proxy extends (EventEmitter as {
                 });
                 res.end(
                     JSON.stringify({
-                        error: e,
+                        error: `Invalid Options for plugin: ${plugin} specified. ${(e as any).message}`,
                     })
                 );
                 return;
@@ -153,13 +154,17 @@ export class Proxy extends (EventEmitter as {
         await this._pluginHandler(plugin, options, req, res);
     };
     public asRouter(): any {
+        this._log('info', 'Running as express router.');
         let router;
         try {
+            this._log('info', 'Creating router...');
             // eslint-disable-next-line @typescript-eslint/no-var-requires
             router = require('express').Router();
         } catch (e) {
+            this._log('error', `Failed to create router: ${e}`);
             throw new Error('You need to install express to use this method.');
         }
+        this._log('info', 'Router created.');
         router.all('/:plugin/:base64', (req, res) => {
             this._requestHandler(req, res);
         });
