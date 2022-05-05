@@ -1,5 +1,5 @@
 import { readFile, writeFile } from 'fs/promises';
-import { existsSync, fstat, mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import path from 'path';
 
 export class FileCache {
