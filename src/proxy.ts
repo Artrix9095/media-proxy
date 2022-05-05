@@ -5,6 +5,7 @@ import { EventEmitter } from 'events';
 import { DefaultPlugin, MPEGPlugin, Plugin, PluginOptions } from './plugins';
 import winston from 'winston';
 import { getProtocol } from './util/http';
+import { FileCache } from './cache';
 
 export class Proxy extends (EventEmitter as {
     new (): TypedEmitter<{ request: [IncomingMessage, ServerResponse] }>;
@@ -12,12 +13,15 @@ export class Proxy extends (EventEmitter as {
     private server: HTTPServer | HTTPServer;
     private plugins = new Map<string, Plugin>();
     private logger: winston.Logger | null = null;
+    private _cache = new FileCache('.cache');
     private _defaultHeaders: Map<string, string[] | string> = new Map([
         ['Access-Control-Allow-Origin', '*'],
         ['Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept'],
         ['Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS'],
         ['Access-Control-Max-Age', '1728000'],
     ]);
+    public readonly maxCacheSize: number;
+    public readonly minCacheSize: number;
     constructor(options: ProxyOptions = {}, callback?: () => void) {
         super();
         options = {
@@ -25,11 +29,14 @@ export class Proxy extends (EventEmitter as {
             server: null,
             host: null,
             debug: false,
+            maxCacheSize: 3e7,
+            minCacheSize: 1e6,
+            maxCacheAge: 0,
             plugins: [new MPEGPlugin(), new DefaultPlugin()],
             ...options,
         };
-        if (options.defaultHeaders) {
-            options.defaultHeaders.forEach((value, key) => {
+        if (options.defaultResponseHeaders) {
+            options.defaultResponseHeaders.forEach((value, key) => {
                 this._defaultHeaders.set(key, value);
             });
         }
@@ -37,7 +44,7 @@ export class Proxy extends (EventEmitter as {
             this.logger = winston.createLogger({
                 level: 'debug',
                 format: winston.format.combine(
-                    winston.format.colorize(),
+                    winston.format.colorize({ all: true }),
                     winston.format.label({ label: 'proxy' }),
                     winston.format.timestamp(),
                     winston.format.prettyPrint(),
@@ -46,6 +53,9 @@ export class Proxy extends (EventEmitter as {
                 transports: [new winston.transports.Console()],
             });
         }
+        this.maxCacheSize = options.maxCacheSize;
+        this.minCacheSize = options.minCacheSize;
+
         if (!options.port && !options.server) {
             // throw new TypeError('Must provide either a port or a server to create a proxy.');
         }
@@ -72,8 +82,10 @@ export class Proxy extends (EventEmitter as {
         pluginName: string,
         options: PluginOptions,
         req: IncomingMessage,
-        res: ServerResponse
+        res: ServerResponse,
+        url: string
     ): Promise<any> {
+        const [, base64] = url.split('/').slice(1);
         const plugin = this.plugins.get(pluginName);
         if (!plugin) {
             this._log('error', `Plugin ${pluginName} not found.`);
@@ -85,7 +97,7 @@ export class Proxy extends (EventEmitter as {
             return;
         }
         this._log('debug', `Plugin ${pluginName} found.`);
-        const { headers, body } = await plugin.request(options, req).catch(e => {
+        const { responseHeaders, statusCode, body } = await plugin.request(options, req).catch(e => {
             this._log('error', `Plugin ${pluginName} failed.`);
             // End with 500
             res.writeHead(500, {
@@ -97,12 +109,33 @@ export class Proxy extends (EventEmitter as {
                 })
             );
             // typescript stuff
-            return { headers: {}, body: null };
+            throw e;
         });
+        let key = base64;
+        if (req.headers.range) {
+            const range = req.headers.range.split('=')[1];
+
+            key += '_' + range;
+        }
+        console.log(key);
+        console.log(key);
         this._log('debug', `Plugin ${pluginName} succeeded.`);
+        const contentSize =
+            responseHeaders['Content-Size'] || body.byteLength || Buffer.from(body).byteLength;
+        const shouldCache = contentSize > this.maxCacheSize || contentSize < this.minCacheSize;
+        let cached = false;
+        if (shouldCache) {
+            await this._handleCache(
+                responseHeaders,
+                body,
+                key,
+                responseHeaders['Content-Type'] || 'text/plain'
+            );
+            cached = true;
+        }
         // WARNING: Bad code ahead.
-        res.writeHead(headers.status, {
-            ...headers,
+        res.writeHead(statusCode, {
+            ...responseHeaders,
             ...Object.fromEntries(
                 // Convert default headers to object entries
                 [...this._defaultHeaders.entries()].map(([key, val]) => [
@@ -111,6 +144,7 @@ export class Proxy extends (EventEmitter as {
                     Array.isArray(val) ? val.join(', ') : val,
                 ])
             ),
+            ETag: cached ? `W/"${base64}"` : '',
         });
         this._log('debug', `Plugin ${pluginName} wrote headers.`);
         res.end(body);
@@ -151,7 +185,28 @@ export class Proxy extends (EventEmitter as {
             return;
         }
         this._log('info', 'Handling request...');
-        await this._pluginHandler(plugin, options, req, res);
+        let key = base64;
+        if (req.headers.range) {
+            const range = req.headers.range.split('=')[1];
+
+            key += '_' + range;
+        }
+        if (
+            this._cache.has(key) &&
+            (req.headers['etag'] === `W/"${key}"` || req.headers['if-none-match'] === `W/"${key}"`)
+        ) {
+            this._log('info', 'Cached response found.');
+            const cached = await this._cache.get(key);
+            res.writeHead(200, {
+                'Content-Type': cached.mimetype,
+                ETag: `W/"${key}"`,
+            });
+            res.end(cached.data);
+            this._log('info', 'Cached response sent.');
+        } else {
+            this._log('info', 'No cached response found. Fallbacking to plugin.');
+            await this._pluginHandler(plugin, options, req, res, url.pathname);
+        }
     };
     public asRouter(): any {
         this._log('info', 'Running as express router.');
@@ -170,16 +225,45 @@ export class Proxy extends (EventEmitter as {
         });
         return router;
     }
+    private async _handleCache(headers: any, body: any, base64: string, contentType: string) {
+        if (this._cache) {
+            this._log('info', 'Handling cache...');
+            const key = base64;
+            await this._cache.set(key, contentType, body);
+            this._log('info', 'Cache handled.');
+        }
+    }
 }
 
 export interface ProxyOptions {
+    /**
+     * @experimental
+     */
     server?: HTTPSServer | HTTPServer | null;
     port?: number | string | null;
     host?: string | null;
     plugins?: Plugin[];
-    defaultHeaders?: Map<string, string | string[]>;
+    defaultResponseHeaders?: Map<string, string | string[]>;
     /**
      * @default false
+     * @description Whether to log requests and responses.
      */
     debug?: boolean;
+    /**
+     *
+     * @default 3e+7 (50MB)
+     * @description A number (in bytes) that will be used as the max size of a cached response. If the response is larger than this, it will not be cached.
+     */
+    maxCacheSize?: number;
+    /**
+     * A number (in bytes) that will be used as the min size of a cached response. If the response is smaller than this, it will not be cached.
+     * If set to 0, the response will always be cached.
+     * If set to -1, the response will never be cached.
+     * @default 1e+6 (1MB)
+     */
+    minCacheSize?: number;
+    /**
+     * @experimental
+     */
+    maxCacheAge?: number;
 }

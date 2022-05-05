@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { IncomingMessage } from 'http';
-import { Plugin, PluginOptions } from './plugin';
+import { Plugin, PluginOptions, PluginResponse } from './plugin';
 import Parser from 'hls-parser';
 import { getProtocol } from '../util/http';
 // Map possible file extensions to their corresponding proxy plugin name
@@ -72,7 +72,7 @@ export class HLSPlugin extends Plugin {
 
         return `${baseUrl}/${base64}`;
     }
-    async request(options: PluginOptions, req: IncomingMessage): Promise<{ headers: any; body: any }> {
+    async request(options: PluginOptions, req: IncomingMessage): Promise<PluginResponse> {
         // Make a request to the url specified in the options using the headers specified in the options
         const response = await axios.get(options.url, {
             headers: options.headers,
@@ -82,7 +82,6 @@ export class HLSPlugin extends Plugin {
         // Parse the response body into a hls playlist
         const playlist = Parser.parse(response.data);
         // Replace all the urls in the playlist with proxied urls
-        console.log(playlist);
         playlist.uri = this._getProxiedUrl(playlist.uri, options.url, options.headers, req);
         if (playlist.isMasterPlaylist) {
             playlist.variants.forEach(variant => {
@@ -118,10 +117,11 @@ export class HLSPlugin extends Plugin {
         }
         return {
             body: Parser.stringify(playlist),
-            headers: {
-                status: response.status,
+            responseHeaders: {
                 // 'Content-Type': response.headers['Content-Type'] || 'application/vnd.apple.mpegurl',
             },
+            requestHeaders: response.headers,
+            statusCode: response.status,
         };
     }
 }

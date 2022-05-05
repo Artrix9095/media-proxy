@@ -1,13 +1,13 @@
 import axios from 'axios';
 import { IncomingMessage } from 'http';
-import { Plugin, PluginOptions } from './plugin';
+import { Plugin, PluginOptions, PluginResponse } from './plugin';
 
 export class MPEGPlugin extends Plugin {
     name = 'mpeg';
     constructor() {
         super('mpeg', {});
     }
-    async request(options: PluginOptions, req: IncomingMessage): Promise<{ headers: any; body: any }> {
+    async request(options: PluginOptions, req: IncomingMessage): Promise<PluginResponse> {
         // get rid of undefined values
         const requestHeaders = JSON.parse(
             JSON.stringify({ ...({ ...req.headers, host: undefined } as any), ...options.headers })
@@ -19,9 +19,8 @@ export class MPEGPlugin extends Plugin {
         });
         const responseHeaders = {
             'Content-Type': response.headers['content-type'],
-            'Content-Length': response.headers['content-length'] ?? response.data.length,
+            'Content-Length': response.headers['content-length'] ?? response.data.byteLength,
             Date: new Date().toUTCString(),
-            status: response.status,
         };
         if (response.headers['content-disposition']) {
             responseHeaders['Content-Disposition'] = response.headers['content-disposition'];
@@ -38,7 +37,9 @@ export class MPEGPlugin extends Plugin {
         }
         return {
             body: Buffer.from(response.data),
-            headers: responseHeaders,
+            requestHeaders: response.headers,
+            responseHeaders,
+            statusCode: response.status,
         };
     }
 }
