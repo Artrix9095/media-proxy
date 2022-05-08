@@ -22,7 +22,7 @@ export class Plugin {
     constructor(public name: string, options?: any) {}
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     async request(options: PluginOptions, req: IncomingMessage): Promise<PluginResponse> {
-        throw new Error('Method not implemented.');
+        throw new Error(`Plugin ${this.name || 'Unknown Plugin'} has not implemented Plugin.request()`);
     }
 }
 

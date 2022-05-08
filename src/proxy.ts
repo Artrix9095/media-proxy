@@ -97,6 +97,9 @@ export class Proxy extends (EventEmitter as {
             return;
         }
         this._log('debug', `Plugin ${pluginName} found.`);
+        if (this._cache.has(base64) && req.headers.range) {
+            delete req.headers.range;
+        }
         const { responseHeaders, statusCode, body } = await plugin.request(options, req).catch(e => {
             this._log('error', `Plugin ${pluginName} failed.`);
             // End with 500
@@ -111,28 +114,35 @@ export class Proxy extends (EventEmitter as {
             // typescript stuff
             throw e;
         });
-        let key = base64;
-        if (req.headers.range) {
-            const range = req.headers.range.split('=')[1];
-
-            key += '_' + range;
-        }
-        console.log(key);
-        console.log(key);
+        const key = base64;
         this._log('debug', `Plugin ${pluginName} succeeded.`);
         const contentSize =
-            responseHeaders['Content-Size'] || body.byteLength || Buffer.from(body).byteLength;
-        const shouldCache = contentSize > this.maxCacheSize || contentSize < this.minCacheSize;
+            statusCode !== 204
+                ? responseHeaders['Content-Length'] ?? body.byteLength ?? Buffer.from(body).byteLength
+                : 0;
+        const shouldCache = contentSize < this.maxCacheSize || contentSize > this.minCacheSize;
         let cached = false;
+
         if (shouldCache) {
             await this._handleCache(
                 responseHeaders,
                 body,
                 key,
                 responseHeaders['Content-Type'] || 'text/plain'
-            );
+            ).catch(e => {
+                cached = false;
+                this._log(
+                    'error',
+                    // prettier-ignore
+                    `Failed to cache ${pluginName} response.\n` +
+                    `Error: ${e.message}\n` +
+                    `Should Cache: ${shouldCache}\n` +
+                    `Content Size: ${contentSize}`
+                );
+            });
             cached = true;
         }
+        !cached && this._log('debug', `Plugin ${pluginName} not cached. File size: ${contentSize}.`);
         // WARNING: Bad code ahead.
         res.writeHead(statusCode, {
             ...responseHeaders,
@@ -151,6 +161,7 @@ export class Proxy extends (EventEmitter as {
         this._log('debug', `Plugin ${pluginName} ended.`);
     }
     private _requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
+        this.emit('request', req, res);
         // @ts-ignore
         const protocol = getProtocol(req);
         const url = new URL(req.url, `${protocol}://${req.headers.host}`);
@@ -185,23 +196,34 @@ export class Proxy extends (EventEmitter as {
             return;
         }
         this._log('info', 'Handling request...');
-        let key = base64;
-        if (req.headers.range) {
-            const range = req.headers.range.split('=')[1];
-
-            key += '_' + range;
-        }
+        const key = base64;
         if (
-            this._cache.has(key) &&
-            (req.headers['etag'] === `W/"${key}"` || req.headers['if-none-match'] === `W/"${key}"`)
+            this._cache.has(key)
+            // && (req.headers['etag'] === `W/"${key}"` || req.headers['if-none-match'] === `W/"${key}"`)
         ) {
             this._log('info', 'Cached response found.');
+            let data: Buffer;
+            let statusCode = 200;
             const cached = await this._cache.get(key);
-            res.writeHead(200, {
+            if (req.headers.range) {
+                const range = req.headers.range.split('=')[1];
+                const [start, end] = range.split('-').map(Number);
+                const length = cached.data.byteLength;
+                this._log('info', `Ranging Cached Content: ${start}-${end || length}`);
+                res.setHeader('Content-Length', (end || length) - start);
+                res.setHeader('Content-Range', `bytes ${start}-${end || length - 1}/${length}`);
+                data = cached.data.slice(start, end || length);
+                statusCode = 206;
+            } else {
+                data = cached.data;
+            }
+            res.writeHead(statusCode, {
                 'Content-Type': cached.mimetype,
                 ETag: `W/"${key}"`,
+                'Content-Length': data.byteLength,
+                'Last-Modified': cached.stats.mtime.toUTCString(),
             });
-            res.end(cached.data);
+            res.end(data);
             this._log('info', 'Cached response sent.');
         } else {
             this._log('info', 'No cached response found. Fallbacking to plugin.');

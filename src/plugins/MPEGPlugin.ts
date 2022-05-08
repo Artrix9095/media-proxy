@@ -12,6 +12,7 @@ export class MPEGPlugin extends Plugin {
         const requestHeaders = JSON.parse(
             JSON.stringify({ ...({ ...req.headers, host: undefined } as any), ...options.headers })
         );
+        console.log(requestHeaders);
         const response = await axios.get(options.url, {
             headers: requestHeaders,
             method: options.method || 'GET',
@@ -21,6 +22,7 @@ export class MPEGPlugin extends Plugin {
             'Content-Type': response.headers['content-type'],
             'Content-Length': response.headers['content-length'] ?? response.data.byteLength,
             Date: new Date().toUTCString(),
+            'Last-Modified': new Date(response.headers['last-modified'] || Date.now()).toUTCString(),
         };
         if (response.headers['content-disposition']) {
             responseHeaders['Content-Disposition'] = response.headers['content-disposition'];
