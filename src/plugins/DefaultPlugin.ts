@@ -15,7 +15,7 @@ export class DefaultPlugin extends Plugin {
         return {
             body: Buffer.from(response.data),
             responseHeaders: response.headers,
-            requestHeaders: response.headers,
+            requestHeaders: options.headers,
             statusCode: response.status,
         };
     }
