@@ -29,8 +29,8 @@ export class Proxy extends (EventEmitter as {
             server: null,
             host: null,
             debug: false,
-            maxCacheSize: 3e7,
-            minCacheSize: 1e6,
+            maxCacheSize: 600 * 1024 * 1024, // 600mb
+            minCacheSize: 1024 * 1024 * 1, // 1MB
             maxCacheAge: 0,
             plugins: [new MPEGPlugin(), new DefaultPlugin()],
             ...options,
@@ -96,7 +96,7 @@ export class Proxy extends (EventEmitter as {
             res.end('404 plugin not found.');
             return;
         }
-        this._log('debug', `Plugin ${pluginName} found.`);
+        this._log('info', `Plugin ${pluginName} found.`);
         if ((await this._cache.has(base64)) && req.headers.range) {
             delete req.headers.range;
         }
@@ -115,13 +115,23 @@ export class Proxy extends (EventEmitter as {
             throw e;
         });
         const key = base64;
-        this._log('debug', `Plugin ${pluginName} succeeded.`);
+        this._log('info', `Plugin ${pluginName} succeeded.`);
         const contentSize =
             statusCode !== 204
                 ? responseHeaders['Content-Length'] ?? body.byteLength ?? Buffer.from(body).byteLength
                 : 0;
-        const shouldCache = contentSize < this.maxCacheSize || contentSize > this.minCacheSize;
-
+        let shouldCache =
+            req.headers['cache-control'] !== 'no-cache' &&
+            contentSize < this.maxCacheSize &&
+            contentSize > this.minCacheSize;
+        // iF the minimum cache size is -1, we don't cache the response
+        if (this.minCacheSize === -1) {
+            shouldCache = false;
+        }
+        // If the minimum cache size is 0, we always cache the response
+        else if (this.minCacheSize === 0) {
+            shouldCache = true;
+        }
         // WARNING: Bad code ahead.
         res.writeHead(statusCode, {
             ...responseHeaders,
@@ -135,16 +145,16 @@ export class Proxy extends (EventEmitter as {
             ),
             ETag: shouldCache ? `W/"${base64}"` : '',
         });
-        this._log('debug', `Plugin ${pluginName} wrote headers.`);
+        this._log('verbose', `Plugin ${pluginName} wrote headers.`);
         res.end(body);
-        this._log('debug', `Plugin ${pluginName} ended.`);
+        this._log('verbose', `Plugin ${pluginName} ended.`);
         if (shouldCache) {
             await this._handleCache(
                 responseHeaders,
                 body,
                 key,
                 responseHeaders['Content-Type'] || 'text/plain'
-            ).catch(e => {
+            ).catch(e =>
                 this._log(
                     'error',
                     // prettier-ignore
@@ -152,13 +162,23 @@ export class Proxy extends (EventEmitter as {
                     `Error: ${e.message}\n` +
                     `Should Cache: ${shouldCache}\n` +
                     `Content Size: ${contentSize}`
-                );
-            });
+                )
+            );
             this._log(
-                'debug',
+                'verbose',
                 // prettier-ignore
                 `Plugin ${pluginName} cached.\n` + 
                 `File Size: ${contentSize}`
+            );
+        } else {
+            this._log(
+                'verbose',
+                // prettier-ignore
+                `It was determined ${pluginName} is not cacheable.\n` +
+                `Content Size: ${contentSize}\n` +
+                `Minimum Cache Size: ${this.minCacheSize}\n` +
+                `Maximum Cache Size: ${this.maxCacheSize}\n` +
+                `Cache Control: ${req.headers['cache-control']}`
             );
         }
     }
@@ -200,13 +220,15 @@ export class Proxy extends (EventEmitter as {
         this._log('info', 'Handling request...');
         const key = base64;
         if (
-            await this._cache.has(key)
+            (await this._cache.has(key)) &&
+            req.headers['cache-control'] !== 'no-cache'
             // && (req.headers['etag'] === `W/"${key}"` || req.headers['if-none-match'] === `W/"${key}"`)
         ) {
             this._log('info', 'Cached response found.');
             let data: Buffer;
             let statusCode = 200;
             const cached = await this._cache.get(key);
+            // The request is probably a video/audio file and the client is asking for a range, so we parse the cached version
             if (req.headers.range) {
                 const range = req.headers.range.split('=')[1];
                 const [start, end] = range.split('-').map(Number);
@@ -232,6 +254,10 @@ export class Proxy extends (EventEmitter as {
             await this._pluginHandler(plugin, options, req, res, url.pathname);
         }
     };
+    public async kill() {
+        this._log('info', 'Killing server...');
+        this.server.close();
+    }
     public asRouter(): any {
         this._log('info', 'Running as express router.');
         let router;
@@ -275,7 +301,7 @@ export interface ProxyOptions {
     debug?: boolean;
     /**
      *
-     * @default 3e+7 (50MB)
+     * @default 600mb
      * @description A number (in bytes) that will be used as the max size of a cached response. If the response is larger than this, it will not be cached.
      */
     maxCacheSize?: number;
@@ -283,7 +309,7 @@ export interface ProxyOptions {
      * A number (in bytes) that will be used as the min size of a cached response. If the response is smaller than this, it will not be cached.
      * If set to 0, the response will always be cached.
      * If set to -1, the response will never be cached.
-     * @default 1e+6 (1MB)
+     * @default 1mb
      */
     minCacheSize?: number;
     /**
