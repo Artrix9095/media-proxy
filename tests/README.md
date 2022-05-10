@@ -27,7 +27,7 @@ $ npm run test
 
 ### Criteria for Contribution
 
-_Note: his extents our [Contribution Guidelines](../CONTRIBUTING.md)_
+_Note: this extents our [Contribution Guidelines](../CONTRIBUTING.md)_
 
 All tests _must_ be written in typescript.
 ALl tests _must_ have clear names, descriptions, and comments.
