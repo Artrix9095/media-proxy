@@ -31,3 +31,9 @@ _opam/
 node_modules
 
 dist
+# Jest files
+coverage
+__tests__
+__snapshots__
+__mocks__
+
