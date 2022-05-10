@@ -12,7 +12,6 @@ export class MPEGPlugin extends Plugin {
         const requestHeaders = JSON.parse(
             JSON.stringify({ ...({ ...req.headers, host: undefined } as any), ...options.headers })
         );
-        console.log(requestHeaders);
         const response = await axios.get(options.url, {
             headers: requestHeaders,
             method: options.method || 'GET',

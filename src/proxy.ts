@@ -97,7 +97,7 @@ export class Proxy extends (EventEmitter as {
             return;
         }
         this._log('debug', `Plugin ${pluginName} found.`);
-        if (this._cache.has(base64) && req.headers.range) {
+        if ((await this._cache.has(base64)) && req.headers.range) {
             delete req.headers.range;
         }
         const { responseHeaders, statusCode, body } = await plugin.request(options, req).catch(e => {
@@ -121,28 +121,7 @@ export class Proxy extends (EventEmitter as {
                 ? responseHeaders['Content-Length'] ?? body.byteLength ?? Buffer.from(body).byteLength
                 : 0;
         const shouldCache = contentSize < this.maxCacheSize || contentSize > this.minCacheSize;
-        let cached = false;
 
-        if (shouldCache) {
-            await this._handleCache(
-                responseHeaders,
-                body,
-                key,
-                responseHeaders['Content-Type'] || 'text/plain'
-            ).catch(e => {
-                cached = false;
-                this._log(
-                    'error',
-                    // prettier-ignore
-                    `Failed to cache ${pluginName} response.\n` +
-                    `Error: ${e.message}\n` +
-                    `Should Cache: ${shouldCache}\n` +
-                    `Content Size: ${contentSize}`
-                );
-            });
-            cached = true;
-        }
-        !cached && this._log('debug', `Plugin ${pluginName} not cached. File size: ${contentSize}.`);
         // WARNING: Bad code ahead.
         res.writeHead(statusCode, {
             ...responseHeaders,
@@ -154,11 +133,34 @@ export class Proxy extends (EventEmitter as {
                     Array.isArray(val) ? val.join(', ') : val,
                 ])
             ),
-            ETag: cached ? `W/"${base64}"` : '',
+            ETag: shouldCache ? `W/"${base64}"` : '',
         });
         this._log('debug', `Plugin ${pluginName} wrote headers.`);
         res.end(body);
         this._log('debug', `Plugin ${pluginName} ended.`);
+        if (shouldCache) {
+            await this._handleCache(
+                responseHeaders,
+                body,
+                key,
+                responseHeaders['Content-Type'] || 'text/plain'
+            ).catch(e => {
+                this._log(
+                    'error',
+                    // prettier-ignore
+                    `Failed to cache ${pluginName} response.\n` +
+                    `Error: ${e.message}\n` +
+                    `Should Cache: ${shouldCache}\n` +
+                    `Content Size: ${contentSize}`
+                );
+            });
+            this._log(
+                'debug',
+                // prettier-ignore
+                `Plugin ${pluginName} cached.\n` + 
+                `File Size: ${contentSize}`
+            );
+        }
     }
     private _requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
         this.emit('request', req, res);
@@ -198,7 +200,7 @@ export class Proxy extends (EventEmitter as {
         this._log('info', 'Handling request...');
         const key = base64;
         if (
-            this._cache.has(key)
+            await this._cache.has(key)
             // && (req.headers['etag'] === `W/"${key}"` || req.headers['if-none-match'] === `W/"${key}"`)
         ) {
             this._log('info', 'Cached response found.');

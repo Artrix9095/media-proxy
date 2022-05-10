@@ -24,7 +24,7 @@ proxy.on('request', (req, res) => {
 const options = {
     // url: 'https://video.twimg.com/ext_tw_video/1499069974626848780/pu/pl/qppOw3_H1PLodWjb.m3u8?variant_version=1&tag=12&container=fmp4',
     // headers: {},
-    url: 'https://www.animegg.org/play/293986/video.mp4?for=101651980982163',
+    url: 'https://www.animegg.org/play/290725/video.mp4?for=101652196636509',
     headers: {
         referer: 'https://www.animegg.org/embed/98904',
     },
