@@ -13,13 +13,11 @@ export class Proxy extends (EventEmitter as {
     private server: HTTPServer | HTTPServer;
     private plugins = new Map<string, Plugin>();
     private logger: winston.Logger | null = null;
-    private _cache = new FileCache('.cache');
-    private _defaultHeaders: Map<string, string[] | string> = new Map([
-        ['Access-Control-Allow-Origin', '*'],
-        ['Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept'],
-        ['Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS'],
-        ['Access-Control-Max-Age', '1728000'],
-    ]);
+    private _cache: FileCache | null = null;
+    private _defaultHeaders = new Map<string, string[] | string>()
+        .set('Access-Control-Allow-Origin', '*')
+        .set('Access-Control-Allow-Headers', ['Origin', 'X-Requested-With', 'Content-Type', 'Accept'])
+        .set('Access-Control-Allow-Methods', ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS']);
     public readonly maxCacheSize: number;
     public readonly minCacheSize: number;
     constructor(options: ProxyOptions = {}, callback?: () => void) {
@@ -31,15 +29,18 @@ export class Proxy extends (EventEmitter as {
             debug: false,
             maxCacheSize: 600 * 1024 * 1024, // 600mb
             minCacheSize: 1024 * 1024 * 1, // 1MB
-            maxCacheAge: 0,
             plugins: [new MPEGPlugin(), new DefaultPlugin()],
             ...options,
         };
+        this._cache = new FileCache('.cache', options.maxCacheAge);
+        this._defaultHeaders.set('Max-Age', options.maxCacheAge.toString());
+        this._defaultHeaders.set('Access-Control-Max-Age', options.maxCacheAge.toString());
         if (options.defaultResponseHeaders) {
             options.defaultResponseHeaders.forEach((value, key) => {
                 this._defaultHeaders.set(key, value);
             });
         }
+
         if (options.debug) {
             this.logger = winston.createLogger({
                 level: 'debug',
@@ -245,7 +246,7 @@ export class Proxy extends (EventEmitter as {
                 'Content-Type': cached.mimetype,
                 ETag: `W/"${key}"`,
                 'Content-Length': data.byteLength,
-                'Last-Modified': cached.stats.mtime.toUTCString(),
+                'Last-Modified': cached.stats.lastModified.toUTCString(),
             });
             res.end(data);
             this._log('info', 'Cached response sent.');
@@ -312,8 +313,5 @@ export interface ProxyOptions {
      * @default 1mb
      */
     minCacheSize?: number;
-    /**
-     * @experimental
-     */
     maxCacheAge?: number;
 }
